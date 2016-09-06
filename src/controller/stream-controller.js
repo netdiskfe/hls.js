@@ -1218,6 +1218,8 @@ class StreamController extends EventHandler {
 
 _checkBuffer() {
     var media = this.media;
+    var vendor = navigator.vendor, userAgent = navigator.userAgent;
+    var isSafari = vendor && vendor.indexOf('Apple') > -1 && userAgent && !userAgent.match('CriOS');
     // if ready state different from HAVE_NOTHING (numeric value 0), we are allowed to seek
     if(media && media.readyState) {
         let currentTime = media.currentTime,
@@ -1238,7 +1240,10 @@ _checkBuffer() {
             logger.log(`target start position not buffered, seek to buffered.start(0) ${startPosition}`);
           }
           logger.log(`adjust currentTime from ${currentTime} to ${startPosition}`);
-          media.currentTime = startPosition;
+          // readyState <= 2 can not successfully seek in safari
+          if (!isSafari || media.readyState > 2) {
+            media.currentTime = startPosition;
+          }
         }
       } else if (this.immediateSwitch) {
       this.immediateLevelSwitchEnd();
@@ -1283,7 +1288,10 @@ _checkBuffer() {
               // this will ensure effective video decoding
               logger.log(`adjust currentTime from ${media.currentTime} to next buffered @ ${nextBufferStart} + nudge ${this.seekHoleNudgeDuration}`);
               let hole = nextBufferStart + this.seekHoleNudgeDuration - media.currentTime;
-              media.currentTime = nextBufferStart + this.seekHoleNudgeDuration;
+              // frequently seeking may cause frequently flicker in safari
+              if (!isSafari || (this.seekHoleNudgeDuration && this.seekHoleNudgeDuration % (10 * this.config.seekHoleNudgeDuration) < this.config.seekHoleNudgeDuration)) {
+                media.currentTime = nextBufferStart + this.seekHoleNudgeDuration;
+              }
               this.hls.trigger(Event.ERROR, {type: ErrorTypes.MEDIA_ERROR, details: ErrorDetails.BUFFER_SEEK_OVER_HOLE, fatal: false, hole : hole});
             }
           }
