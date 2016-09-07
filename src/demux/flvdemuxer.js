@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-07 20:45:00
+ * @last modified time: 2016-09-07 21:05:47
  */
 
 import FLVParser from './flv/flv-parser';
@@ -38,8 +38,7 @@ class FLVDemuxer {
         this._aacTrack = {container : 'video/x-flv', type: 'audio', id :-1, sequenceNumber: 0, samples : [], len : 0};
         this._id3Track = {type: 'id3', id :-1, sequenceNumber: 0, samples : [], len : 0};
         this._txtTrack = {type: 'text', id: -1, sequenceNumber: 0, samples: [], len: 0};
-        // flush any partial content
-        this.aacOverFlow = null;
+
         this.aacLastPTS = null;
         this.avcNaluState = 0;
         this.remuxer.switchLevel();
