@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-07 22:03:31
+ * @last modified time: 2016-09-07 22:15:27
  */
 
 import ADTS from './adts';
@@ -99,7 +99,7 @@ class FLVDemuxer {
                         if (tag.codec === 'aac') {
                             if (tag.pkt_type === 1) {
                                 this._parseAACTag(tag);
-                            } else if (tag.pkt_type === 0) {
+                            } else if (tag.pkt_type === 0 && !this._aacTrack.audiosamplerate) {
                                 let track = this._aacTrack;
                                 let config = ADTS.getAudioConfig(this.observer, tag.data, -2, audioCodec);
                                 track.audiosamplerate = config.samplerate;
