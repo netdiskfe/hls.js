@@ -6,6 +6,7 @@ import Event from '../events';
 import {ErrorTypes, ErrorDetails} from '../errors';
 import AACDemuxer from '../demux/aacdemuxer';
 import TSDemuxer from '../demux/tsdemuxer';
+import FLVDemuxer from '../demux/flvdemuxer';
 import MP4Remuxer from '../remux/mp4-remuxer';
 import PassThroughRemuxer from '../remux/passthrough-remuxer';
 
@@ -31,7 +32,9 @@ class DemuxerInline {
       let hls = this.hls,
           id = this.id;
       // probe for content type
-      if (TSDemuxer.probe(data)) {
+      if (FLVDemuxer.probe(data)) {
+        demuxer = new FLVDemuxer(hls, id, MP4Remuxer, this.config);
+      } else if (TSDemuxer.probe(data)) {
         if (this.typeSupported.mp2t === true) {
           demuxer = new TSDemuxer(hls, id, PassThroughRemuxer, this.config);
         } else {
