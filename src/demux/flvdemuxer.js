@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-07 19:48:27
+ * @last modified time: 2016-09-07 20:45:00
  */
 
 import FLVParser from './flv/flv-parser';
@@ -95,11 +95,23 @@ class FLVDemuxer {
                     break;
                 case FLVParser.DATA:
                     let tag = cTag.readData(data.slice(start, start + cTag.tagDataSize));
-                    if (tag && tag.type) {
-                        if (tag.type === 'audio') {
-                            this._parseAACTag(tag);
-                        } else {
-                            this._parseAVCTag(tag);
+                    if (tag && tag.codec) {
+                        if (tag.codec === 'aac') {
+                            if (tag.pkt_type === 1) {
+                                this._parseAACTag(tag);
+                            } else if (tag.pkt_type === 0) {
+                                this._aacTrack.config = [41, 145, 136, 0];
+                                this._aacTrack.audiosamplerate = 48000;
+                                this._aacTrack.channelCount = 2;
+                                this._aacTrack.codec = 'mp4a.40.5';
+                                this._aacTrack.duration = this._duration; 
+                            }
+                        } else if (tag.codec === 'avc') {
+                            if (tag.pkt_type === 1) {
+                                this._parseAVCTag(tag);
+                            } else if (tag.pkt_type === 0) {
+
+                            }
                         }
                     }
                     this._flvParserState = FLVParser.PREV_TAG;
@@ -122,31 +134,26 @@ class FLVDemuxer {
 
     _parseAACTag (tag) {
         var track = this._aacTrack;
-        var pts = tag.pts;
+        var pts = 0;
         var aacLastPTS = this.aacLastPTS;
-        track.config = [41, 145, 136, 0];
-        track.audiosamplerate = 48000;
-        track.channelCount = 2;
-        track.codec = 'mp4a.40.5';
-        track.duration = this._duration;
         var frameDuration = 1024 * 90000 / track.audiosamplerate;
         if (aacLastPTS) {
             pts = aacLastPTS + frameDuration;
         } else {
-            pts = 135000;
+            pts = tag.timestamp * frameDuration;
         }
         track.samples.push({
             dts: pts,
             pts: pts,
-            unit: tag.sample
+            unit: tag.data
         });
-        track.len += tag.sample.length;
+        track.len += tag.data.length;
         this.aacLastPTS = pts;
     }
 
     _parseAVCTag (tag) {
         var track = this._avcTrack;
-        var units = this._parseAVCNALu(tag.sample);
+        var units = this._parseAVCNALu(tag.data);
     }
 
     _parseAVCNALu (array) {
@@ -155,7 +162,6 @@ class FLVDemuxer {
             value, overflow, state = this.avcNaluState;
         var units = [],
             unit, unitType, lastUnitStart, lastUnitType;
-        //logger.log('PES:' + Hex.hexDump(array));
         while (i < len) {
             value = array[i++];
             // finding 3 or 4-byte start codes (00 00 01 OR 00 00 00 01)
