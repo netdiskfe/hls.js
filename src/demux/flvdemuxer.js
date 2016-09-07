@@ -4,9 +4,10 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-07 21:05:47
+ * @last modified time: 2016-09-07 22:03:31
  */
 
+import ADTS from './adts';
 import FLVParser from './flv/flv-parser';
 import FLVTag from './flv/flv-tag';
 import {logger} from '../utils/logger';
@@ -99,11 +100,13 @@ class FLVDemuxer {
                             if (tag.pkt_type === 1) {
                                 this._parseAACTag(tag);
                             } else if (tag.pkt_type === 0) {
-                                this._aacTrack.config = [41, 145, 136, 0];
-                                this._aacTrack.audiosamplerate = 48000;
-                                this._aacTrack.channelCount = 2;
-                                this._aacTrack.codec = 'mp4a.40.5';
-                                this._aacTrack.duration = this._duration; 
+                                let track = this._aacTrack;
+                                let config = ADTS.getAudioConfig(this.observer, tag.data, -2, audioCodec);
+                                track.audiosamplerate = config.samplerate;
+                                track.channelCount = config.channelCount;
+                                track.codec = config.codec;
+                                track.config = [41, 145, 136, 0];
+                                track.duration = this._duration; 
                             }
                         } else if (tag.codec === 'avc') {
                             if (tag.pkt_type === 1) {
