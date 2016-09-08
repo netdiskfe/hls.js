@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-08 16:22:26
+ * @last modified time: 2016-09-08 16:35:21
  */
 
 import Event from '../events';
@@ -276,7 +276,7 @@ class FLVDemuxer {
                                                 byteArray.push(expGolombDecoder.readUByte());
                                             }
 
-                                            this._insertSampleInOrder(this._txtTrack.samples, { type: 3, pts: tag.timestamp * 90, bytes: byteArray });
+                                            this.insertSampleInOrder(this._txtTrack.samples, { type: 3, pts: tag.timestamp * 90, bytes: byteArray });
                                         }
                                     }
                                 }
@@ -344,7 +344,24 @@ class FLVDemuxer {
             logger.log(debugString);
         }
         pushAccesUnit();
+    }
 
+    insertSampleInOrder (arr, data) {
+        var len = arr.length;
+        if (len > 0) {
+            if (data.pts >= arr[len - 1].pts) {
+                arr.push(data);
+            } else {
+                for (var pos = len - 1; pos >= 0; pos--) {
+                    if (data.pts < arr[pos].pts) {
+                        arr.splice(pos, 0, data);
+                        break;
+                    }
+                }
+            }
+        } else {
+            arr.push(data);
+        }
     }
 
     parseAVCNALUnit (array) {
