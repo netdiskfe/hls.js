@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-08 21:54:20
+ * @last modified time: 2016-09-08 22:43:17
  */
 
 import Event from '../events';
@@ -130,7 +130,7 @@ class FLVDemuxer {
             if (samples.length) {
                 let firstPTS = samples[0].pts;
                 let lastPTS = samples[samples.length - 1].pts; 
-                this.avcFrameDuration = Math.round((lastPTS - firstPTS) / (4 * (samples.length - 1)));
+                this.avcFrameDuration = Math.round((lastPTS - firstPTS) / (samples.length - 1));
             }
         }
 
