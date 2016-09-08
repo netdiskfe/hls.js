@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-08 16:35:21
+ * @last modified time: 2016-09-08 17:11:49
  */
 
 import Event from '../events';
@@ -41,7 +41,6 @@ class FLVDemuxer {
         this._aacTrack = {container : 'video/x-flv', type: 'audio', id :-1, sequenceNumber: 0, samples : [], len : 0};
         this._id3Track = {type: 'id3', id :-1, sequenceNumber: 0, samples : [], len : 0};
         this._txtTrack = {type: 'text', id: -1, sequenceNumber: 0, samples: [], len: 0};
-        this.aacLastPTS = null;
         this.remuxer.switchLevel();
     }
 
@@ -130,21 +129,14 @@ class FLVDemuxer {
 
     parseAACTag (tag) {
         var track = this._aacTrack;
-        var pts = 0;
-        var aacLastPTS = this.aacLastPTS;
-        var frameDuration = 1024 * 90000 / track.audiosamplerate;
-        if (aacLastPTS) {
-            pts = aacLastPTS + frameDuration;
-        } else {
-            pts = tag.timestamp * 90;
-        }
-        track.samples.push({
+        var samples = track.samples;
+        var pts = (this.timeOffset * 1000 + tag.timestamp) * 90;
+        samples.push({
             dts: pts,
             pts: pts,
             unit: tag.data
         });
         track.len += tag.data.byteLength;
-        this.aacLastPTS = pts;
     }
 
     parseAVCTag (tag) {
@@ -174,6 +166,8 @@ class FLVDemuxer {
         // free tag.data to save up some memory
         tag.data = null;
         var debugString = '';
+        var dts = (this.timeOffset * 1000 + tag.timestamp) * 90;
+        var pts = (this.timeOffset * 1000 + tag.timestamp + tag.cts) * 90;
 
         var pushAccesUnit = function() {
             if (units2.length) {
@@ -184,7 +178,7 @@ class FLVDemuxer {
                 if (!this.config.forceKeyFrameOnDiscontinuity ||
                     key === true ||
                     (track.sps && (samples.length || this.contiguous))) {
-                    avcSample = { units: { units: units2, length: length }, pts: tag.timestamp * 90, dts: tag.timestamp * 90, key: key };
+                    avcSample = { units: { units: units2, length: length }, pts: pts, dts: dts, key: key };
                     samples.push(avcSample);
                     track.len += length;
                     track.nbNalu += units2.length;
@@ -276,7 +270,7 @@ class FLVDemuxer {
                                                 byteArray.push(expGolombDecoder.readUByte());
                                             }
 
-                                            this.insertSampleInOrder(this._txtTrack.samples, { type: 3, pts: tag.timestamp * 90, bytes: byteArray });
+                                            this.insertSampleInOrder(this._txtTrack.samples, { type: 3, pts: pts, bytes: byteArray });
                                         }
                                     }
                                 }

@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 12:56:09
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-08 11:39:05
+ * @last modified time: 2016-09-08 16:51:54
  */
 
 class FLVTag {
@@ -102,6 +102,7 @@ class FLVTag {
                 if (compositionTime & 0x00800000) {
                     compositionTime |= 0xff000000;
                 }
+                tag.cts = compositionTime;
             }
             tag.data = data.slice(5);
             return tag;
