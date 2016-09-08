@@ -12,3 +12,22 @@ if (typeof ArrayBuffer !== 'undefined' && !ArrayBuffer.prototype.slice) {
     return result;
   };
 }
+
+if (typeof Uint8Array !== 'undefined' && !Uint8Array.prototype.concat) {
+  Uint8Array.prototype.concat = function (...arrays) {
+    let that = this;
+    let totalLength = that.length;
+    for (let arr of arrays) {
+      totalLength += arr.byteLength;
+    }
+    let result = new Uint8Array(totalLength);
+    let offset = 0;
+    result.set(that, offset);
+    offset += that.length;
+    for (let arr of arrays) {
+      result.set(arr, offset);
+      offset += arr.byteLength;
+    }
+    return result;
+  };
+}

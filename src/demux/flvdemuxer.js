@@ -4,9 +4,11 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-08 11:25:50
+ * @last modified time: 2016-09-08 16:22:26
  */
 
+import Event from '../events';
+import ExpGolomb from './exp-golomb';
 import FLVParser from '../demux/flv-parser';
 import FLVTag from '../demux/flv-tag';
 import {logger} from '../utils/logger';
@@ -39,9 +41,7 @@ class FLVDemuxer {
         this._aacTrack = {container : 'video/x-flv', type: 'audio', id :-1, sequenceNumber: 0, samples : [], len : 0};
         this._id3Track = {type: 'id3', id :-1, sequenceNumber: 0, samples : [], len : 0};
         this._txtTrack = {type: 'text', id: -1, sequenceNumber: 0, samples: [], len: 0};
-
         this.aacLastPTS = null;
-        this.avcNaluState = 0;
         this.remuxer.switchLevel();
     }
 
@@ -97,22 +97,16 @@ class FLVDemuxer {
                     let tag = cTag.readData(data.slice(start, start + cTag.tagDataSize));
                     if (tag && tag.codec) {
                         if (tag.codec === 'aac') {
-                            let track = this._aacTrack;
-                            if (tag.pkt_type === 1 && track.audiosamplerate) {
-                                this._parseAACTag(tag);
-                            } else if (tag.pkt_type === 0 && !track.audiosamplerate) {
-                                let config = this.getAudioConfig(this.observer, tag.data, 0, audioCodec);
-                                track.config = config.config;
-                                track.audiosamplerate = config.samplerate;
-                                track.channelCount = config.channelCount;
-                                track.codec = config.codec;
-                                track.duration = this._duration; 
+                            if (tag.pkt_type === 1 && this._aacTrack.audiosamplerate) {
+                                this.parseAACTag(tag);
+                            } else if (tag.pkt_type === 0 && !this._aacTrack.audiosamplerate) {
+                                this.parseAudioConfig(this.observer, tag.data, 0, audioCodec);
                             }
                         } else if (tag.codec === 'avc') {
-                            if (tag.pkt_type === 1) {
-                                this._parseAVCTag(tag);
-                            } else if (tag.pkt_type === 0) {
-
+                            if (tag.pkt_type === 1 && this._avcTrack.lengthSizeMinusOne) {
+                                this.parseAVCTag(tag);
+                            } else if (tag.pkt_type === 0 && !this._avcTrack.lengthSizeMinusOne) {
+                                this.parseVideoConfig(this.observer, tag.data, 0, audioCodec);
                             }
                         }
                     }
@@ -134,7 +128,7 @@ class FLVDemuxer {
     destroy () {
     }
 
-    _parseAACTag (tag) {
+    parseAACTag (tag) {
         var track = this._aacTrack;
         var pts = 0;
         var aacLastPTS = this.aacLastPTS;
@@ -142,119 +136,241 @@ class FLVDemuxer {
         if (aacLastPTS) {
             pts = aacLastPTS + frameDuration;
         } else {
-            pts = tag.timestamp * frameDuration;
+            pts = tag.timestamp * 90;
         }
         track.samples.push({
             dts: pts,
             pts: pts,
             unit: tag.data
         });
-        track.len += tag.data.length;
+        track.len += tag.data.byteLength;
         this.aacLastPTS = pts;
     }
 
-    _parseAVCTag (tag) {
+    parseAVCTag (tag) {
         var track = this._avcTrack;
-        var units = this._parseAVCNALu(tag.data);
-    }
+        var samples = track.samples,
+            units = this.parseAVCNALUnit(tag.data),
+            units2 = [],
+            debug = false,
+            key = false,
+            length = 0,
+            expGolombDecoder,
+            avcSample,
+            push,
+            i;
+        // no NALu found
+        if (units.length === 0 && samples.length > 0) {
+            // append tag.data to previous NAL unit
+            var lastavcSample = samples[samples.length - 1];
+            var lastUnit = lastavcSample.units.units[lastavcSample.units.units.length - 1];
+            var tmp = new Uint8Array(lastUnit.data.byteLength + tag.data.byteLength);
+            tmp.set(lastUnit.data, 0);
+            tmp.set(tag.data, lastUnit.data.byteLength);
+            lastUnit.data = tmp;
+            lastavcSample.units.length += tag.data.byteLength;
+            track.len += tag.data.byteLength;
+        }
+        // free tag.data to save up some memory
+        tag.data = null;
+        var debugString = '';
 
-    _parseAVCNALu (array) {
-        var i = 0,
-            len = array.byteLength,
-            value, overflow, state = this.avcNaluState;
-        var units = [],
-            unit, unitType, lastUnitStart, lastUnitType;
-        while (i < len) {
-            value = array[i++];
-            // finding 3 or 4-byte start codes (00 00 01 OR 00 00 00 01)
-            switch (state) {
-                case 0:
-                    if (value === 0) {
-                        state = 1;
-                    }
-                    break;
+        var pushAccesUnit = function() {
+            if (units2.length) {
+                // only push AVC sample if starting with a keyframe is not mandatory OR
+                //    if keyframe already found in this fragment OR
+                //       keyframe found in last fragment (track.sps) AND
+                //          samples already appended (we already found a keyframe in this fragment) OR fragment is contiguous
+                if (!this.config.forceKeyFrameOnDiscontinuity ||
+                    key === true ||
+                    (track.sps && (samples.length || this.contiguous))) {
+                    avcSample = { units: { units: units2, length: length }, pts: tag.timestamp * 90, dts: tag.timestamp * 90, key: key };
+                    samples.push(avcSample);
+                    track.len += length;
+                    track.nbNalu += units2.length;
+                } else {
+                    // dropped samples, track it
+                    track.dropped++;
+                }
+                units2 = [];
+                length = 0;
+            }
+        }.bind(this);
+
+        units.forEach(unit => {
+            switch (unit.type) {
+                //NDR
                 case 1:
-                    if (value === 0) {
-                        state = 2;
-                    } else {
-                        state = 0;
+                    push = true;
+                    if (debug) {
+                        debugString += 'NDR ';
                     }
                     break;
-                case 2:
-                case 3:
-                    if (value === 0) {
-                        state = 3;
-                    } else if (value === 1 && i < len) {
-                        unitType = array[i] & 0x1f;
-                        //logger.log('find NALU @ offset:' + i + ',type:' + unitType);
-                        if (lastUnitStart) {
-                            unit = { data: array.subarray(lastUnitStart, i - state - 1), type: lastUnitType };
-                            //logger.log('pushing NALU, type/size:' + unit.type + '/' + unit.data.byteLength);
-                            units.push(unit);
-                        } else {
-                            // lastUnitStart is undefined => this is the first start code found in this PES packet
-                            // first check if start code delimiter is overlapping between 2 PES packets,
-                            // ie it started in last packet (lastState not zero)
-                            // and ended at the beginning of this PES packet (i <= 4 - lastState)
-                            let lastState = this.avcNaluState;
-                            if (lastState && (i <= 4 - lastState)) {
-                                // start delimiter overlapping between PES packets
-                                // strip start delimiter bytes from the end of last NAL unit
-                                let track = this._avcTrack,
-                                    samples = track.samples;
-                                if (samples.length) {
-                                    let lastavcSample = samples[samples.length - 1],
-                                        lastUnits = lastavcSample.units.units,
-                                        lastUnit = lastUnits[lastUnits.length - 1];
-                                    // check if lastUnit had a state different from zero
-                                    if (lastUnit.state) {
-                                        // strip last bytes
-                                        lastUnit.data = lastUnit.data.subarray(0, lastUnit.data.byteLength - lastState);
-                                        lastavcSample.units.length -= lastState;
-                                        track.len -= lastState;
+                //IDR
+                case 5:
+                    push = true;
+                    if (debug) {
+                        debugString += 'IDR ';
+                    }
+                    key = true;
+                    break;
+                //SEI
+                case 6:
+                    push = true;
+                    if (debug) {
+                        debugString += 'SEI ';
+                    }
+                    expGolombDecoder = new ExpGolomb(this.discardEPB(unit.data));
+
+                    // skip frameType
+                    expGolombDecoder.readUByte();
+
+                    var payloadType = 0;
+                    var payloadSize = 0;
+                    var endOfCaptions = false;
+                    var b = 0;
+
+                    while (!endOfCaptions && expGolombDecoder.bytesAvailable > 1) {
+                        payloadType = 0;
+                        do {
+                            b = expGolombDecoder.readUByte();
+                            payloadType += b;
+                        } while (b === 0xFF);
+
+                        // Parse payload size.
+                        payloadSize = 0;
+                        do {
+                            b = expGolombDecoder.readUByte();
+                            payloadSize += b;
+                        } while (b === 0xFF);
+
+                        // TODO: there can be more than one payload in an SEI packet...
+                        // TODO: need to read type and size in a while loop to get them all
+                        if (payloadType === 4 && expGolombDecoder.bytesAvailable !== 0) {
+
+                            endOfCaptions = true;
+
+                            var countryCode = expGolombDecoder.readUByte();
+
+                            if (countryCode === 181) {
+                                var providerCode = expGolombDecoder.readUShort();
+
+                                if (providerCode === 49) {
+                                    var userStructure = expGolombDecoder.readUInt();
+
+                                    if (userStructure === 0x47413934) {
+                                        var userDataType = expGolombDecoder.readUByte();
+
+                                        // Raw CEA-608 bytes wrapped in CEA-708 packet
+                                        if (userDataType === 3) {
+                                            var firstByte = expGolombDecoder.readUByte();
+                                            var secondByte = expGolombDecoder.readUByte();
+
+                                            var totalCCs = 31 & firstByte;
+                                            var byteArray = [firstByte, secondByte];
+
+                                            for (i = 0; i < totalCCs; i++) {
+                                                // 3 bytes per CC
+                                                byteArray.push(expGolombDecoder.readUByte());
+                                                byteArray.push(expGolombDecoder.readUByte());
+                                                byteArray.push(expGolombDecoder.readUByte());
+                                            }
+
+                                            this._insertSampleInOrder(this._txtTrack.samples, { type: 3, pts: tag.timestamp * 90, bytes: byteArray });
+                                        }
                                     }
                                 }
                             }
-                            // If NAL units are not starting right at the beginning of the PES packet, push preceding data into previous NAL unit.
-                            overflow = i - state - 1;
-                            if (overflow > 0) {
-                                let track = this._avcTrack,
-                                    samples = track.samples;
-                                //logger.log('first NALU found with overflow:' + overflow);
-                                if (samples.length) {
-                                    let lastavcSample = samples[samples.length - 1],
-                                        lastUnits = lastavcSample.units.units,
-                                        lastUnit = lastUnits[lastUnits.length - 1],
-                                        tmp = new Uint8Array(lastUnit.data.byteLength + overflow);
-                                    tmp.set(lastUnit.data, 0);
-                                    tmp.set(array.subarray(0, overflow), lastUnit.data.byteLength);
-                                    lastUnit.data = tmp;
-                                    lastavcSample.units.length += overflow;
-                                    track.len += overflow;
-                                }
+                        } else if (payloadSize < expGolombDecoder.bytesAvailable) {
+                            for (i = 0; i < payloadSize; i++) {
+                                expGolombDecoder.readUByte();
                             }
                         }
-                        lastUnitStart = i;
-                        lastUnitType = unitType;
-                        state = 0;
-                    } else {
-                        state = 0;
                     }
                     break;
+                //SPS
+                case 7:
+                    push = true;
+                    if (debug) {
+                        debugString += 'SPS ';
+                    }
+                    if (!track.sps) {
+                        expGolombDecoder = new ExpGolomb(unit.data);
+                        var config = expGolombDecoder.readSPS();
+                        track.width = config.width;
+                        track.height = config.height;
+                        track.sps = [unit.data];
+                        track.duration = this._duration;
+                        var codecarray = unit.data.subarray(1, 4);
+                        var codecstring = 'avc1.';
+                        for (i = 0; i < 3; i++) {
+                            var h = codecarray[i].toString(16);
+                            if (h.length < 2) {
+                                h = '0' + h;
+                            }
+                            codecstring += h;
+                        }
+                        track.codec = codecstring;
+                    }
+                    break;
+                //PPS
+                case 8:
+                    push = true;
+                    if (debug) {
+                        debugString += 'PPS ';
+                    }
+                    if (!track.pps) {
+                        track.pps = [unit.data];
+                    }
+                    break;
+                case 9:
+                    push = false;
+                    if (debug) {
+                        debugString += 'AUD ';
+                    }
+                    pushAccesUnit();
+                    break;
                 default:
+                    push = false;
+                    debugString += 'unknown NAL ' + unit.type + ' ';
                     break;
             }
+            if (push) {
+                units2.push(unit);
+                length += unit.data.byteLength;
+            }
+        });
+        if (debug || debugString.length) {
+            logger.log(debugString);
         }
-        if (lastUnitStart) {
-            unit = { data: array.subarray(lastUnitStart, len), type: lastUnitType, state: state };
-            units.push(unit);
-            //logger.log('pushing NALU, type/size/state:' + unit.type + '/' + unit.data.byteLength + '/' + state);
-            this.avcNaluState = state;
+        pushAccesUnit();
+
+    }
+
+    parseAVCNALUnit (array) {
+        var track = this._avcTrack;
+        var lengthSizeMinusOne = track.lengthSizeMinusOne;
+        var units = [];
+        var i = 0;
+        var len = array.length;
+        while (i < len) {
+            let unitLen = 0;
+            for (let j = 0; j < lengthSizeMinusOne; j++) {
+                unitLen |= array[i + j] << (8 * (lengthSizeMinusOne - 1 - j));
+            }
+            i += lengthSizeMinusOne;
+            let unitType = array[i] & 0x1f;
+            units.push({
+                type: unitType,
+                data: array.slice(i, i + unitLen)
+            });
+            i += unitLen;
         }
         return units;
     }
 
-    getAudioConfig (observer, data, offset, audioCodec) {
+    parseAudioConfig (observer, data, offset, audioCodec) {
+        var track = this._aacTrack;
         var adtsObjectType, // :int
             adtsSampleingIndex, // :int
             adtsExtensionSampleingIndex, // :int
@@ -323,39 +439,6 @@ class FLVDemuxer {
                 adtsExtensionSampleingIndex = adtsSampleingIndex;
             }
         }
-        /* refer to http://wiki.multimedia.cx/index.php?title=MPEG-4_Audio#Audio_Specific_Config
-            ISO 14496-3 (AAC).pdf - Table 1.13 — Syntax of AudioSpecificConfig()
-          Audio Profile / Audio Object Type
-          0: Null
-          1: AAC Main
-          2: AAC LC (Low Complexity)
-          3: AAC SSR (Scalable Sample Rate)
-          4: AAC LTP (Long Term Prediction)
-          5: SBR (Spectral Band Replication)
-          6: AAC Scalable
-         sampling freq
-          0: 96000 Hz
-          1: 88200 Hz
-          2: 64000 Hz
-          3: 48000 Hz
-          4: 44100 Hz
-          5: 32000 Hz
-          6: 24000 Hz
-          7: 22050 Hz
-          8: 16000 Hz
-          9: 12000 Hz
-          10: 11025 Hz
-          11: 8000 Hz
-          12: 7350 Hz
-          13: Reserved
-          14: Reserved
-          15: frequency is written explictly
-          Channel Configurations
-          These are the channel configurations:
-          0: Defined in AOT Specifc Config
-          1: 1 channel: front-center
-          2: 2 channels: front-left, front-right
-        */
         // audioObjectType = profile => profile, the MPEG-4 Audio Object Type minus 1
         config[0] = adtsObjectType << 3;
         // samplingFrequencyIndex
@@ -372,7 +455,65 @@ class FLVDemuxer {
             config[2] |= 2 << 2;
             config[3] = 0;
         }
-        return { config: config, samplerate: adtsSampleingRates[adtsSampleingIndex], channelCount: adtsChanelConfig, codec: ('mp4a.40.' + adtsObjectType) };
+        if (!track.audiosamplerate) {
+            track.config = config;
+            track.audiosamplerate = adtsSampleingRates[adtsSampleingIndex];
+            track.channelCount = adtsChanelConfig;
+            track.codec = ('mp4a.40.' + adtsObjectType);
+            track.duration = this._duration;
+        }
+        return {
+            config: config,
+            samplerate: adtsSampleingRates[adtsSampleingIndex],
+            channelCount: adtsChanelConfig,
+            codec: ('mp4a.40.' + adtsObjectType)
+        };
+    }
+
+    parseVideoConfig (observer, data, offset, videoCodec) {
+        var track = this._avcTrack;
+        var configurationVersion = data[0];
+        var AVCProfileIndication = data[1];
+        var profile_compatibility = data[2];
+        var AVCLevelIndication = data[3];
+        var lengthSizeMinusOne = 1 + (data[4] & 3);
+        var numOfSequenceParameterSets = data[5] & 0x1F;
+        var sidx = 6;
+        var sequenceParameterSetLength = new DataView(data.slice(sidx, sidx + 2).buffer).getUint16(0);
+        sidx += 2;
+        var sequenceParameterSetNALUnits = data.slice(sidx, sidx + sequenceParameterSetLength);
+        sidx += sequenceParameterSetLength;
+        var numOfPictureParameterSets = data[sidx++];
+        var pictureParameterSetLength = new DataView(data.slice(sidx, sidx + 2).buffer).getUint16(0);
+        sidx += 2;
+        var pictureParameterSetNALUnits = data.slice(sidx, sidx + pictureParameterSetLength);
+        if (!track.lengthSizeMinusOne) {
+            track.lengthSizeMinusOne = lengthSizeMinusOne;
+
+            var expGolombDecoder = new ExpGolomb(sequenceParameterSetNALUnits);
+            var config = expGolombDecoder.readSPS();
+            track.width = config.width;
+            track.height = config.height;
+            track.sps = [sequenceParameterSetNALUnits];
+            track.duration = this._duration;
+            var codecarray = sequenceParameterSetNALUnits.subarray(1, 4);
+            var codecstring = 'avc1.';
+            for (var i = 0; i < 3; i++) {
+                var h = codecarray[i].toString(16);
+                if (h.length < 2) {
+                    h = '0' + h;
+                }
+                codecstring += h;
+            }
+            track.codec = codecstring;
+
+            track.pps = [pictureParameterSetNALUnits];
+        }
+        return {
+            lengthSizeMinusOne: lengthSizeMinusOne,
+            sequenceParameterSetNALUnits: sequenceParameterSetNALUnits,
+            pictureParameterSetNALUnits: pictureParameterSetNALUnits
+        };
     }
 
 }

@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 12:56:09
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-07 20:44:18
+ * @last modified time: 2016-09-08 11:39:05
  */
 
 class FLVTag {
@@ -88,10 +88,12 @@ class FLVTag {
         };
         var videoHeader = data[0];
         var codecID = (videoHeader & 0x0f);
+        var frameType = (videoHeader >> 4) & 0x0f;
         // AVC 
         if (codecID === 7) {
             let packetType = data[1];
             tag.codec = 'avc';
+            tag.key = frameType === 1 ? true : false;
             tag.pkt_type = packetType;
             if (packetType === 1) {
                 let compositionTime = data[2] << 16;
