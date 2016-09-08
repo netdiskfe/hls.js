@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-08 22:43:17
+ * @last modified time: 2016-09-08 22:48:05
  */
 
 import Event from '../events';
@@ -150,7 +150,7 @@ class FLVDemuxer {
         var pts = Math.round((this.timeOffset * 1000 + tag.timestamp) * 90) - this.aacDelta;
         var aacLastPTS = this.aacLastPTS;
         var frameDuration = 1024 * 90000 / track.audiosamplerate;
-        if (aacLastPTS && !this.aacDelta) {
+        if (aacLastPTS && !this.aacDelta && this.contiguous) {
             let nextPts = aacLastPTS + frameDuration;
             let aacDelta = pts - nextPts;
             if (aacDelta > frameDuration) {
@@ -199,7 +199,7 @@ class FLVDemuxer {
         var dts = Math.round((this.timeOffset * 1000 + tag.timestamp) * 90) - this.avcDelta;
         var pts = dts + tag.cts * 90;
 
-        if (avcLastPTS && frameDuration && !this.avcDelta) {
+        if (avcLastPTS && frameDuration && !this.avcDelta && this.contiguous) {
             let nextPts = avcLastPTS + frameDuration;
             let avcDelta = pts - nextPts;
             if (avcDelta > frameDuration) {
