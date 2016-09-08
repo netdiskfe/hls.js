@@ -4,11 +4,11 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-08 11:14:56
+ * @last modified time: 2016-09-08 11:25:50
  */
 
-import FLVParser from './flv/flv-parser';
-import FLVTag from './flv/flv-tag';
+import FLVParser from '../demux/flv-parser';
+import FLVTag from '../demux/flv-tag';
 import {logger} from '../utils/logger';
 import {ErrorTypes, ErrorDetails} from '../errors';
 
