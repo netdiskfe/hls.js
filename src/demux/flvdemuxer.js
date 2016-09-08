@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-08 20:22:21
+ * @last modified time: 2016-09-08 21:54:20
  */
 
 import Event from '../events';
@@ -41,7 +41,10 @@ class FLVDemuxer {
         this._aacTrack = {container : 'video/x-flv', type: 'audio', id :-1, sequenceNumber: 0, samples : [], len : 0};
         this._id3Track = {type: 'id3', id :-1, sequenceNumber: 0, samples : [], len : 0};
         this._txtTrack = {type: 'text', id: -1, sequenceNumber: 0, samples: [], len: 0};
-        // this.aacLastPTS = null;
+        this.aacLastPTS = null;
+        this.aacDelta = 0;
+        this.avcLastPTS = null;
+        this.avcDelta = 0;
         this.remuxer.switchLevel();
     }
 
@@ -59,8 +62,10 @@ class FLVDemuxer {
         this.videoCodec = videoCodec;
         this.timeOffset = timeOffset;
         this.contiguous = false;
-        this._flvParserState = FLVParser.FILE_HEADER;
+        this.aacDelta = 0;
+        this.avcDelta = 0;
         this._duration = duration;
+        this._flvParserState = FLVParser.FILE_HEADER;
 
         if (cc !== this.lastCC) {
             logger.log('discontinuity detected');
@@ -120,6 +125,15 @@ class FLVDemuxer {
             }
         }
 
+        if (!this.avcFrameDuration) {
+            let samples = this._avcTrack.samples;
+            if (samples.length) {
+                let firstPTS = samples[0].pts;
+                let lastPTS = samples[samples.length - 1].pts; 
+                this.avcFrameDuration = Math.round((lastPTS - firstPTS) / (4 * (samples.length - 1)));
+            }
+        }
+
         this.remux(level, sn, null);
     }
 
@@ -133,19 +147,24 @@ class FLVDemuxer {
     parseAACTag (tag) {
         var track = this._aacTrack;
         var samples = track.samples;
-        var pts = (this.timeOffset * 1000 + tag.timestamp) * 90;
-        // var aacLastPTS = this.aacLastPTS;
-        // var frameDuration = 1024 * 90000 / track.audiosamplerate;
-        // if (aacLastPTS) {
-        //     pts = aacLastPTS + frameDuration;
-        // }
+        var pts = Math.round((this.timeOffset * 1000 + tag.timestamp) * 90) - this.aacDelta;
+        var aacLastPTS = this.aacLastPTS;
+        var frameDuration = 1024 * 90000 / track.audiosamplerate;
+        if (aacLastPTS && !this.aacDelta) {
+            let nextPts = aacLastPTS + frameDuration;
+            let aacDelta = pts - nextPts;
+            if (aacDelta > frameDuration) {
+                this.aacDelta = aacDelta;
+                pts = nextPts;
+            }
+        }
         samples.push({
             dts: pts,
             pts: pts,
             unit: tag.data
         });
         track.len += tag.data.byteLength;
-        // this.aacLastPTS = pts;
+        this.aacLastPTS = pts;
     }
 
     parseAVCTag (tag) {
@@ -175,8 +194,20 @@ class FLVDemuxer {
         // free tag.data to save up some memory
         tag.data = null;
         var debugString = '';
-        var dts = (this.timeOffset * 1000 + tag.timestamp) * 90;
-        var pts = (this.timeOffset * 1000 + tag.timestamp + tag.cts) * 90;
+        var avcLastPTS = this.avcLastPTS;
+        var frameDuration = this.avcFrameDuration;
+        var dts = Math.round((this.timeOffset * 1000 + tag.timestamp) * 90) - this.avcDelta;
+        var pts = dts + tag.cts * 90;
+
+        if (avcLastPTS && frameDuration && !this.avcDelta) {
+            let nextPts = avcLastPTS + frameDuration;
+            let avcDelta = pts - nextPts;
+            if (avcDelta > frameDuration) {
+                this.avcDelta = avcDelta;
+                pts = nextPts;
+                dts = pts - tag.cts * 90;
+            }
+        }
 
         var pushAccesUnit = function() {
             if (units2.length) {
@@ -347,6 +378,7 @@ class FLVDemuxer {
             logger.log(debugString);
         }
         pushAccesUnit();
+        this.avcLastPTS = pts;
     }
 
     insertSampleInOrder (arr, data) {
