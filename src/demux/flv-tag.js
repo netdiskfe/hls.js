@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 12:56:09
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-08 16:51:54
+ * @last modified time: 2016-09-08 20:18:53
  */
 
 class FLVTag {
@@ -50,6 +50,7 @@ class FLVTag {
     readAudioData (data) {
         var tag = {
             type: 'audio',
+            id: FLVTag.TAG_TYPE_AUDIO,
             timestamp: this.timestamp
         };
         var audioHeader = data[0];
@@ -73,8 +74,8 @@ class FLVTag {
         }
         // AAC
         if (soundFormat === 10) {
-            let packetType = data[1];
             tag.codec = 'aac';
+            let packetType = data[1];
             tag.pkt_type = packetType;
             tag.data = data.slice(2);
             return tag;
@@ -84,16 +85,17 @@ class FLVTag {
     readVideoData (data) {
         var tag = {
             type: 'video',
+            id: FLVTag.TAG_TYPE_VIDEO,
             timestamp: this.timestamp
         };
         var videoHeader = data[0];
         var codecID = (videoHeader & 0x0f);
         var frameType = (videoHeader >> 4) & 0x0f;
+        tag.key = frameType === 1 ? true : false;
         // AVC 
         if (codecID === 7) {
-            let packetType = data[1];
             tag.codec = 'avc';
-            tag.key = frameType === 1 ? true : false;
+            let packetType = data[1];
             tag.pkt_type = packetType;
             if (packetType === 1) {
                 let compositionTime = data[2] << 16;

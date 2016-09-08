@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-08 17:11:49
+ * @last modified time: 2016-09-08 20:22:21
  */
 
 import Event from '../events';
@@ -41,6 +41,7 @@ class FLVDemuxer {
         this._aacTrack = {container : 'video/x-flv', type: 'audio', id :-1, sequenceNumber: 0, samples : [], len : 0};
         this._id3Track = {type: 'id3', id :-1, sequenceNumber: 0, samples : [], len : 0};
         this._txtTrack = {type: 'text', id: -1, sequenceNumber: 0, samples: [], len: 0};
+        // this.aacLastPTS = null;
         this.remuxer.switchLevel();
     }
 
@@ -100,12 +101,14 @@ class FLVDemuxer {
                                 this.parseAACTag(tag);
                             } else if (tag.pkt_type === 0 && !this._aacTrack.audiosamplerate) {
                                 this.parseAudioConfig(this.observer, tag.data, 0, audioCodec);
+                                this._aacTrack.id = tag.id;
                             }
                         } else if (tag.codec === 'avc') {
                             if (tag.pkt_type === 1 && this._avcTrack.lengthSizeMinusOne) {
                                 this.parseAVCTag(tag);
                             } else if (tag.pkt_type === 0 && !this._avcTrack.lengthSizeMinusOne) {
                                 this.parseVideoConfig(this.observer, tag.data, 0, audioCodec);
+                                this._avcTrack.id = tag.id;
                             }
                         }
                     }
@@ -131,12 +134,18 @@ class FLVDemuxer {
         var track = this._aacTrack;
         var samples = track.samples;
         var pts = (this.timeOffset * 1000 + tag.timestamp) * 90;
+        // var aacLastPTS = this.aacLastPTS;
+        // var frameDuration = 1024 * 90000 / track.audiosamplerate;
+        // if (aacLastPTS) {
+        //     pts = aacLastPTS + frameDuration;
+        // }
         samples.push({
             dts: pts,
             pts: pts,
             unit: tag.data
         });
         track.len += tag.data.byteLength;
+        // this.aacLastPTS = pts;
     }
 
     parseAVCTag (tag) {
@@ -500,7 +509,6 @@ class FLVDemuxer {
         var pictureParameterSetNALUnits = data.slice(sidx, sidx + pictureParameterSetLength);
         if (!track.lengthSizeMinusOne) {
             track.lengthSizeMinusOne = lengthSizeMinusOne;
-
             var expGolombDecoder = new ExpGolomb(sequenceParameterSetNALUnits);
             var config = expGolombDecoder.readSPS();
             track.width = config.width;
@@ -517,7 +525,6 @@ class FLVDemuxer {
                 codecstring += h;
             }
             track.codec = codecstring;
-
             track.pps = [pictureParameterSetNALUnits];
         }
         return {
