@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-08 22:48:05
+ * @last modified time: 2016-09-09 10:10:55
  */
 
 import Event from '../events';
@@ -131,6 +131,7 @@ class FLVDemuxer {
                 let firstPTS = samples[0].pts;
                 let lastPTS = samples[samples.length - 1].pts; 
                 this.avcFrameDuration = Math.round((lastPTS - firstPTS) / (samples.length - 1));
+                console.log(this.avcFrameDuration);
             }
         }
 
@@ -150,13 +151,11 @@ class FLVDemuxer {
         var pts = Math.round((this.timeOffset * 1000 + tag.timestamp) * 90) - this.aacDelta;
         var aacLastPTS = this.aacLastPTS;
         var frameDuration = 1024 * 90000 / track.audiosamplerate;
-        if (aacLastPTS && !this.aacDelta && this.contiguous) {
+        if (aacLastPTS && this.contiguous && !this.aacDelta) {
             let nextPts = aacLastPTS + frameDuration;
             let aacDelta = pts - nextPts;
-            if (aacDelta > frameDuration) {
-                this.aacDelta = aacDelta;
-                pts = nextPts;
-            }
+            this.aacDelta = aacDelta;
+            pts = nextPts;
         }
         samples.push({
             dts: pts,
@@ -199,14 +198,12 @@ class FLVDemuxer {
         var dts = Math.round((this.timeOffset * 1000 + tag.timestamp) * 90) - this.avcDelta;
         var pts = dts + tag.cts * 90;
 
-        if (avcLastPTS && frameDuration && !this.avcDelta && this.contiguous) {
+        if (avcLastPTS && frameDuration && this.contiguous && !this.avcDelta) {
             let nextPts = avcLastPTS + frameDuration;
             let avcDelta = pts - nextPts;
-            if (avcDelta > frameDuration) {
-                this.avcDelta = avcDelta;
-                pts = nextPts;
-                dts = pts - tag.cts * 90;
-            }
+            this.avcDelta = avcDelta;
+            pts = nextPts;
+            dts = pts - tag.cts * 90;
         }
 
         var pushAccesUnit = function() {
