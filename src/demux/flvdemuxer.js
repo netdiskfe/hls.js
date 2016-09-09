@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-09 12:34:04
+ * @last modified time: 2016-09-09 14:17:20
  */
 
 import Event from '../events';
@@ -43,8 +43,9 @@ class FLVDemuxer {
         this._txtTrack = {type: 'text', id: -1, sequenceNumber: 0, samples: [], len: 0};
         this.aacLastPTS = null;
         this.aacDelta = 0;
-        this.avcLastPTS = null;
+        this.avcLastDTS = null;
         this.avcDelta = 0;
+        this.timeAdjust = false;
         this.remuxer.switchLevel();
     }
 
@@ -64,6 +65,7 @@ class FLVDemuxer {
         this.contiguous = false;
         this.aacDelta = 0;
         this.avcDelta = 0;
+        this.timeAdjust = false;
         this._duration = duration;
         this._flvParserState = FLVParser.FILE_HEADER;
 
@@ -129,9 +131,9 @@ class FLVDemuxer {
         if (!this.avcFrameDuration) {
             let samples = this._avcTrack.samples;
             if (samples.length) {
-                let firstPTS = samples[0].pts;
-                let lastPTS = samples[samples.length - 1].pts; 
-                this.avcFrameDuration = Math.round((lastPTS - firstPTS) / (samples.length - 1));
+                let firstDTS = samples[0].dts;
+                let lastDTS = samples[samples.length - 1].dts; 
+                this.avcFrameDuration = Math.round((lastDTS - firstDTS) / (samples.length - 1));
             }
         }
 
@@ -148,15 +150,25 @@ class FLVDemuxer {
     parseAACTag (tag) {
         var track = this._aacTrack;
         var samples = track.samples;
-        var pts = Math.round((this.timeOffset * 1000 + tag.timestamp) * 90) - this.aacDelta;
+        var pts = tag.timestamp * 90;
         var aacLastPTS = this.aacLastPTS;
         var frameDuration = 1024 * 90000 / track.audiosamplerate;
-        if (aacLastPTS && this.contiguous && !this.aacDelta) {
+
+        // pts adjust
+        if (this.timeAdjust || (this.contiguous && Math.abs(tag.timestamp - this.timeOffset * 1000) > 1000)) {
+            this.timeAdjust = true;
+            pts += this.timeOffset * 90000;
+        }
+        if (this.aacDelta) {
+            pts += this.aacDelta;
+        }
+        if (aacLastPTS && this.timeAdjust && !this.aacDelta) {
             let nextPts = aacLastPTS + frameDuration;
-            let aacDelta = pts - nextPts;
+            let aacDelta = nextPts - pts;
             this.aacDelta = aacDelta;
             pts = nextPts;
         }
+
         samples.push({
             dts: pts,
             pts: pts,
@@ -193,18 +205,24 @@ class FLVDemuxer {
         // free tag.data to save up some memory
         tag.data = null;
         var debugString = '';
-        var avcLastPTS = this.avcLastPTS;
+        var avcLastDTS = this.avcLastDTS;
         var frameDuration = this.avcFrameDuration;
-        var dts = Math.round((this.timeOffset * 1000 + tag.timestamp) * 90) - this.avcDelta;
-        var pts = dts + tag.cts * 90;
-
-        if (avcLastPTS && this.contiguous && frameDuration && !this.avcDelta) {
-            let nextPts = avcLastPTS + frameDuration;
-            let avcDelta = pts - nextPts;
-            this.avcDelta = avcDelta;
-            pts = nextPts;
-            dts = pts - tag.cts * 90;
+        var dts = tag.timestamp * 90;
+        // dts adjust
+        if (this.timeAdjust || (this.contiguous && Math.abs(tag.timestamp - this.timeOffset * 1000) > 1000)) {
+            this.timeAdjust = true;
+            dts += this.timeOffset * 90000;
         }
+        if (this.avcDelta) {
+            dts += this.avcDelta;
+        }
+        if (avcLastDTS && this.timeAdjust && frameDuration && !this.avcDelta) {
+            let nextDts = avcLastDTS + frameDuration;
+            let avcDelta = nextDts - dts;
+            this.avcDelta = avcDelta;
+            dts = nextDts;
+        }
+        var pts = dts + tag.cts * 90;
 
         var pushAccesUnit = function() {
             if (units2.length) {
@@ -375,7 +393,7 @@ class FLVDemuxer {
             logger.log(debugString);
         }
         pushAccesUnit();
-        this.avcLastPTS = pts;
+        this.avcLastDTS = dts;
     }
 
     insertSampleInOrder (arr, data) {
