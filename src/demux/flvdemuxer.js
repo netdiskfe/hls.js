@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-09 14:17:20
+ * @last modified time: 2016-09-09 15:23:11
  */
 
 import Event from '../events';
@@ -105,18 +105,20 @@ class FLVDemuxer {
                     let tag = cTag.readData(data.slice(start, start + cTag.tagDataSize));
                     if (tag && tag.codec) {
                         if (tag.codec === 'aac') {
-                            if (tag.pkt_type === 1 && this._aacTrack.audiosamplerate) {
+                            let track = this._aacTrack;
+                            if (tag.pkt_type === 1 && track.audiosamplerate) {
                                 this.parseAACTag(tag);
-                            } else if (tag.pkt_type === 0 && !this._aacTrack.audiosamplerate) {
+                            } else if (tag.pkt_type === 0 && !track.audiosamplerate) {
                                 this.parseAudioConfig(this.observer, tag.data, 0, audioCodec);
-                                this._aacTrack.id = tag.id;
+                                track.id = tag.id;
                             }
                         } else if (tag.codec === 'avc') {
-                            if (tag.pkt_type === 1 && this._avcTrack.lengthSizeMinusOne) {
+                            let track = this._avcTrack;
+                            if (tag.pkt_type === 1 && track.lengthSizeMinusOne) {
                                 this.parseAVCTag(tag);
-                            } else if (tag.pkt_type === 0 && !this._avcTrack.lengthSizeMinusOne) {
+                            } else if (tag.pkt_type === 0 && !track.lengthSizeMinusOne) {
                                 this.parseVideoConfig(this.observer, tag.data, 0, audioCodec);
-                                this._avcTrack.id = tag.id;
+                                track.id = tag.id;
                             }
                         }
                     }
@@ -125,6 +127,15 @@ class FLVDemuxer {
                     break;
                 default:
                     throw new Error('invalid FLVParserState');
+            }
+        }
+
+        if (!this.aacFrameDuration) {
+            let samples = this._aacTrack.samples;
+            if (samples.length) {
+                let firstPTS = samples[0].pts;
+                let lastPTS = samples[samples.length - 1].pts;
+                this.aacFrameDuration = Math.round((lastPTS - firstPTS) / (samples.length - 1));
             }
         }
 
@@ -150,19 +161,19 @@ class FLVDemuxer {
     parseAACTag (tag) {
         var track = this._aacTrack;
         var samples = track.samples;
-        var pts = tag.timestamp * 90;
         var aacLastPTS = this.aacLastPTS;
-        var frameDuration = 1024 * 90000 / track.audiosamplerate;
-
+        var frameDuration = this.aacFrameDuration;
+        var timeOffset = Math.round(this.timeOffset * 1000); // ms
+        var pts = tag.timestamp * 90;
         // pts adjust
-        if (this.timeAdjust || (this.contiguous && Math.abs(tag.timestamp - this.timeOffset * 1000) > 1000)) {
+        if (this.timeAdjust || (this.contiguous && Math.abs(tag.timestamp - timeOffset) > 1000)) {
             this.timeAdjust = true;
-            pts += this.timeOffset * 90000;
+            pts += timeOffset * 90;
         }
         if (this.aacDelta) {
             pts += this.aacDelta;
         }
-        if (aacLastPTS && this.timeAdjust && !this.aacDelta) {
+        if (aacLastPTS && this.timeAdjust && frameDuration && !this.aacDelta) {
             let nextPts = aacLastPTS + frameDuration;
             let aacDelta = nextPts - pts;
             this.aacDelta = aacDelta;
@@ -207,11 +218,12 @@ class FLVDemuxer {
         var debugString = '';
         var avcLastDTS = this.avcLastDTS;
         var frameDuration = this.avcFrameDuration;
+        var timeOffset = Math.round(this.timeOffset * 1000); // ms
         var dts = tag.timestamp * 90;
         // dts adjust
-        if (this.timeAdjust || (this.contiguous && Math.abs(tag.timestamp - this.timeOffset * 1000) > 1000)) {
+        if (this.timeAdjust || (this.contiguous && Math.abs(tag.timestamp - timeOffset) > 1000)) {
             this.timeAdjust = true;
-            dts += this.timeOffset * 90000;
+            dts += timeOffset * 90;
         }
         if (this.avcDelta) {
             dts += this.avcDelta;
