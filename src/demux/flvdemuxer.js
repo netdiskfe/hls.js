@@ -4,7 +4,7 @@
  * @email:  tanshaohui@baidu.com
  * @date:   2016-09-07 10:23:57
  * @last modified by:   tanshaohui
- * @last modified time: 2016-09-09 11:30:57
+ * @last modified time: 2016-09-09 12:34:04
  */
 
 import Event from '../events';
@@ -62,7 +62,6 @@ class FLVDemuxer {
         this.videoCodec = videoCodec;
         this.timeOffset = timeOffset;
         this.contiguous = false;
-        this.segmentContinue = false;
         this.aacDelta = 0;
         this.avcDelta = 0;
         this._duration = duration;
@@ -79,10 +78,6 @@ class FLVDemuxer {
             this.lastLevel = level;
         } else if (sn === (this.lastSN + 1)) {
             this.contiguous = true;
-        }
-
-        if (sn === (this.lastSN + 1)) {
-            this.segmentContinue = true;
         }
 
         this.lastSN = sn;
@@ -156,7 +151,7 @@ class FLVDemuxer {
         var pts = Math.round((this.timeOffset * 1000 + tag.timestamp) * 90) - this.aacDelta;
         var aacLastPTS = this.aacLastPTS;
         var frameDuration = 1024 * 90000 / track.audiosamplerate;
-        if (aacLastPTS && this.segmentContinue && !this.aacDelta) {
+        if (aacLastPTS && this.contiguous && !this.aacDelta) {
             let nextPts = aacLastPTS + frameDuration;
             let aacDelta = pts - nextPts;
             this.aacDelta = aacDelta;
@@ -203,7 +198,7 @@ class FLVDemuxer {
         var dts = Math.round((this.timeOffset * 1000 + tag.timestamp) * 90) - this.avcDelta;
         var pts = dts + tag.cts * 90;
 
-        if (avcLastPTS && this.segmentContinue && frameDuration && !this.avcDelta) {
+        if (avcLastPTS && this.contiguous && frameDuration && !this.avcDelta) {
             let nextPts = avcLastPTS + frameDuration;
             let avcDelta = pts - nextPts;
             this.avcDelta = avcDelta;
